@@ -4,8 +4,9 @@ import os, random, time, sys
 import numpy as np
 import torch
 import torch.nn as nn
+import pandas as pd
 
-from layers import EnhancedCVCLNetwork
+from layers2 import AD_MVC
 from loss import DeepMVCLoss
 from dataprocessing1 import MultiviewData, get_multiview_data
 from models1 import pre_train, contrastive_train, valid, evaluate_teacher_with_multiple_metrics, ViewQualityEvaluator
@@ -28,7 +29,7 @@ parser.add_argument('--lr', type=float, default=1e-4)
 parser.add_argument('--temperature_l', type=float, default=1)
 parser.add_argument('--ib_lambda', type=float, default=1e-3)
 parser.add_argument('--warmup_epochs', type=int, default=100)
-# parser.add_argument('--normalized', type=bool, default=False)
+parser.add_argument('--normalized', type=bool, default=False)
 parser.add_argument('--save_model', action='store_true', help='whether to save model')
 parser.add_argument('--fusion_mode', default='static', choices=['static', 'dynamic', 'attention'],
                     help='type of fusion mechanism')
@@ -66,13 +67,12 @@ def check_model_device(model):
 # ---------------- 数据集特定超参 ----------------
 if __name__ == "__main__":
     if args.db == "MSRCv1":
-        args.learning_rate = 0.0001
+        args.lr = 0.0001
         args.batch_size = 35
         args.seed = 42
         args.con_epochs = 500
         args.warmup_epochs = 200  # 增加warmup轮数
-        args.temperature_l = 0.5
-
+        # args.temperature_l = 0.5
 
         # 超参数设置
         dim_high_feature = 2000
@@ -82,59 +82,52 @@ if __name__ == "__main__":
         beta_max = 0.005
 
     elif args.db == "BDGP":
-        args.temperature_l = 0.5
-        args.learning_rate = 0.0001
-        args.batch_size = 64
+        args.lr = 0.0001
+        args.batch_size = 50
         args.seed = 42
         args.con_epochs = 500
+        args.normalized = True
+        args.warmup_epochs = 200  # 增加warmup轮数
 
         dim_high_feature = 2000
         dim_low_feature = 1024
         dims = [256, 512]
         lambda_max = 0.05
-        beta_max = 0.005
+        beta_max = 0.05
 
-    elif args.db == "COIL20":
-        args.temperature_l = 1
-        args.learning_rate = 0.0001
-        args.batch_size = 144
-        args.seed = 10
-        args.con_epochs = 500
-
-        dim_high_feature = 512
-        dim_low_feature = 256
-        dims = [256, 512, 768]
-        lambda_max = 0.01
-        beta_max = 0.01
 
     elif args.db == "MNIST-USPS":
-        args.learning_rate = 0.00005
-        args.batch_size = 32
-        args.seed = 42
-        args.mse_epochs = 300
-        args.con_epochs = 600
+        args.lr = 0.0001
+        args.batch_size = 50
+        args.seed = 10
+        args.mse_epochs = 200
+        args.con_epochs = 500
         args.warmup_epochs = 200  # 增加warmup轮数
-        args.temperature_l = 0.5
-        args.ib_lambda = 5e-4
+        # args.temperature_l = 0.5
+        # args.ib_lambda = 5e-4
 
 
         dim_high_feature = 1500
         dim_low_feature = 1024
         dims = [256, 512, 1024]
-        lambda_max = 0.005
-        beta_max = 0.001
+        lambda_max = 0.05
+        beta_max = 0.01
 
     elif args.db == "Fashion":
-        args.learning_rate = 0.0005
+        args.lr = 0.0001
         args.batch_size = 100
         args.seed = 20
-        args.con_epochs = 600
+        args.con_epochs = 500
+        args.warmup_epochs = 200  # 增加warmup轮数
+        args.temperature_l = 0.5
 
         dim_high_feature = 2000
         dim_low_feature = 500
         dims = [256, 512]
-        lambda_max = 0.005
-        beta_max = 0.0005
+        lambda_max = 0.05
+        beta_max = 0.001
+
+
 
     # =================== 运行实验 ===================
     set_seed(args.seed)
@@ -149,7 +142,7 @@ if __name__ == "__main__":
     print(f"[Info] views={num_views}  samples={num_samples}  clusters={num_clusters}")
 
     # 创建增强型模型，使用自适应融合
-    model = EnhancedCVCLNetwork(
+    model = AD_MVC(
         num_views, input_sizes, dims,
         dim_high_feature, dim_low_feature, num_clusters,
         teacher_index=0,  # 初始教师视图
@@ -171,8 +164,9 @@ if __name__ == "__main__":
     # 选择教师视图 - 使用聚类性能评估
     print("==> Selecting teacher view based on clustering performance...")
 
-    if args.db == "MNIST-USPS":
+    if args.db == "MNIST-USPS, COIL20":
         # 对MNIST-USPS使用特殊策略
+        model.train_mode = 'fusion'
         teacher_evaluations = evaluate_teacher_with_multiple_metrics(
             model, mv_eval, args.batch_size, method='acc_primary'
         )
@@ -191,6 +185,7 @@ if __name__ == "__main__":
 
     else:
         # 其他数据集使用综合评估
+        model.train_mode = 'fusion'
         teacher_evaluations = evaluate_teacher_with_multiple_metrics(
             model, mv_eval, args.batch_size, method='comprehensive'
         )
@@ -208,11 +203,13 @@ if __name__ == "__main__":
     mvc_loss_fn = DeepMVCLoss(args.batch_size, num_clusters, lambda_max, beta_max)
     print("==> Contrastive training ...")
 
+    # contrastive_loss_history = []  # 记录损失值的列表
+
     for epoch in range(args.con_epochs):
         # warm-up
         ratio = min(1.0, epoch / args.warmup_epochs)
-        lam_cur = lambda_max * ratio
-        beta_cur = beta_max * ratio
+        lam_cur = lambda_max * 1
+        beta_cur = beta_max * 1
         ib_cur = args.ib_lambda * ratio
 
         loss = contrastive_train(
@@ -221,16 +218,22 @@ if __name__ == "__main__":
             args.temperature_l, False, epoch, optim
         )
 
+        # contrastive_loss_history.append(loss)
+        # # 保存损失值到文件
+        # pd.DataFrame(contrastive_loss_history, columns=['Loss']).to_csv('contrastive_train_loss.csv', index=False)
+
         # 每100个epoch评估一次视图质量并更新融合权重（对static和dynamic模式）
         if (epoch % 100 == 99 or epoch == args.con_epochs - 1) and args.fusion_mode in ['static', 'dynamic']:
             print(f"==> Epoch {epoch + 1}: Evaluating view quality...")
             eval_loader, _, _, _ = get_multiview_data(mv_eval, args.batch_size)
+            model.train_mode = 'fusion'
             evaluator = ViewQualityEvaluator(model, eval_loader, num_views, num_clusters)
 
             # 根据融合模式不同处理
             if args.fusion_mode == 'static':
                 # 使用softmax方法计算权重，进一步放大高性能视图的权重
                 fusion_weights = evaluator.get_fusion_weights(method='softmax')
+                model.train_mode = 'fusion'
                 evaluator.apply_weights(model, fusion_weights)
             elif args.fusion_mode == 'dynamic':
                 # 找出最佳视图
@@ -246,6 +249,9 @@ if __name__ == "__main__":
             print(f"==> Intermediate evaluation with updated {args.fusion_mode} fusion:")
             _ = valid(model, mv_eval, args.batch_size)
 
+
+
+
     print("==> Training finished, validating ...")
 
     # 最终评估前进行视图质量评估和权重优化
@@ -253,6 +259,7 @@ if __name__ == "__main__":
 
     if args.fusion_mode == 'static':
         print("==> Final view quality evaluation:")
+        model.train_mode = 'fusion'
         evaluator = ViewQualityEvaluator(model, eval_loader, num_views, num_clusters)
 
         # 尝试不同的权重计算方法
@@ -285,8 +292,8 @@ if __name__ == "__main__":
 
         # 保存结果
         with open(f'result_{args.db}_enhanced.txt', 'a+') as f:
-            f.write('{} \t {} \t {} \t {:.6f} \t {:.6f} \t {:.6f} \t {:.6f} \t {} \t {} \t {} \t {:.4f} \n'.format(
-                args.seed, args.batch_size, args.lr,
+            f.write('{} \t {} \t {} \t {:.6f} \t {:.6f} \t {:.6f} \t {:.6f} \t {:.6f} \t {:.6f} \t {} \t {} \t {} \t {:.4f} \n'.format(
+                args.seed, args.batch_size, args.lr, lambda_max, beta_max,
                 acc, nmi, pur, ari,
                 best_method, list(best_weights), args.fusion_mode, (time.time() - t)
             ))
@@ -294,6 +301,7 @@ if __name__ == "__main__":
     elif args.fusion_mode == 'dynamic':
         # 对于动态融合，我们可以通过调整偏置来优化
         print("==> Final view quality evaluation for dynamic fusion:")
+        model.train_mode = 'fusion'
         evaluator = ViewQualityEvaluator(model, eval_loader, num_views, num_clusters)
 
         # 获取视图质量评分
@@ -311,20 +319,21 @@ if __name__ == "__main__":
 
         # 保存结果
         with open(f'result_{args.db}_enhanced.txt', 'a+') as f:
-            f.write('{} \t {} \t {} \t {:.6f} \t {:.6f} \t {:.6f} \t {:.6f} \t dynamic \t best_view={} \t {:.4f} \n'.format(
-                args.seed, args.batch_size, args.lr,
+            f.write('{} \t {} \t {} \t {:.6f} \t {:.6f} \t {:.6f} \t {:.6f} \t {:.6f} \t {:.6f} \t dynamic \t best_view={} \t {:.4f} \n'.format(
+                args.seed, args.batch_size, args.lr, lambda_max, beta_max,
                 acc, nmi, pur, ari, best_view_idx, (time.time() - t)
             ))
 
     else:  # attention 模式
         # 对于注意力融合，直接评估
         print(f"==> Final evaluation with attention fusion:")
+        model.train_mode = 'fusion'
         acc, nmi, pur, ari = valid(model, mv_eval, args.batch_size)
 
         # 保存结果
         with open(f'result_{args.db}_enhanced.txt', 'a+') as f:
-            f.write('{} \t {} \t {} \t {:.6f} \t {:.6f} \t {:.6f} \t {:.6f} \t attention \t {:.4f} \n'.format(
-                args.seed, args.batch_size, args.lr,
+            f.write('{} \t {} \t {} \t {:.6f} \t {:.6f} \t {:.6f} \t {:.6f} \t {:.6f} \t {:.6f} \t attention \t {:.4f} \n'.format(
+                args.seed, args.batch_size, args.lr, lambda_max, beta_max,
                 acc, nmi, pur, ari, (time.time() - t)
             ))
 

@@ -71,7 +71,7 @@ class ViewQualityEvaluator:
             scores = scores ** 2
         elif method == 'softmax':
             # softmax放大差异
-            temperature = 2.0  # 控制权重差异程度
+            temperature = 1.0  # 控制权重差异程度
             exp_scores = np.exp(scores / temperature)
             return exp_scores / exp_scores.sum()
 
@@ -126,6 +126,10 @@ def pre_train(network_model, mv_data, batch_size, epochs, optimizer, writer=None
             print(f"[PreTrain] epoch {epoch:3d}  loss={avg:.6f}")
 
     print(f"Pre-training finished, time = {time.time() - t0:.2f}s")
+
+    # pd.DataFrame(history, columns=['Loss']).to_csv('pre_train_loss.csv', index=False)
+
+
     return history
 
 
@@ -146,6 +150,8 @@ def contrastive_train(model,
     loader, num_views, num_samples, _ = get_multiview_data(mv_data, batch_size)
     mse = torch.nn.MSELoss()
     total = 0.
+
+    # loss_history = []
 
     # 检查是否为增强型模型
     enhanced_model = hasattr(model, 'fusion_layer')
@@ -195,7 +201,7 @@ def contrastive_train(model,
                 view_confidences.append(confidence)
 
             # 只有当视图置信度高于阈值时才参与一致性约束
-            confidence_threshold = 0.7  # 可调节
+            confidence_threshold = 0.5  # 可调节
             high_quality_views = []
 
             for i, confidence in enumerate(view_confidences):
@@ -211,7 +217,7 @@ def contrastive_train(model,
                         lbps[i],
                         reduction='batchmean'
                     )
-                consistency_loss = 0.1 * consistency_loss / len(high_quality_views)  # 降低一致性损失权重
+                consistency_loss = 0.3 * consistency_loss / len(high_quality_views)  # 降低一致性损失权重
                 loss_terms.append(consistency_loss)
             # 如果没有高质量视图，则不添加一致性损失
 
@@ -226,11 +232,17 @@ def contrastive_train(model,
         optimizer.step()
         total += loss.item()
 
+        # loss_history.append(total / num_samples)
+
     avg = total / num_samples
     if writer and epoch % 1 == 0:
         writer.add_scalar('train/loss', avg, epoch)
     if epoch % 10 == 0:
         print(f"[Contra] epoch {epoch:4d}  loss={avg:.6f}")
+
+    # 保存损失值到文件
+    # pd.DataFrame(loss_history, columns=['Loss']).to_csv(f'contrastive_train_loss_epoch_{epoch}.csv', index=False)
+
 
     return avg
 
@@ -310,121 +322,6 @@ def evaluate_teacher_selection(model, mv_data, batch_size):
                 view_loss[v] += mse(sub_views[v], recons[v]).item()
 
     return [l / num_samples for l in view_loss]
-#
-# def evaluate_teacher_selection_by_clustering(model, mv_data, batch_size):
-#     """
-#     基于聚类性能评估各视图作为教师的效果
-#     返回各视图的聚类性能分数
-#     """
-#     from metrics import calculate_metrics
-#
-#     model.eval()
-#     num_views = len(mv_data.data_views)
-#     view_scores = []
-#
-#     print("==> Evaluating teacher candidates based on clustering performance...")
-#
-#     with torch.no_grad():
-#         for teacher_candidate in range(num_views):
-#             # 临时设置当前视图为教师
-#             original_teacher = model.teacher_index
-#             model.set_teacher(teacher_candidate)
-#
-#             # 获取预测结果
-#             pred_final, preds_each, labels = inference(model, mv_data, batch_size)
-#
-#             # 计算聚类性能指标
-#             acc, nmi, pur, ari = calculate_metrics(labels, pred_final)
-#
-#             # 综合评分：可以调整权重
-#             score = 0.4 * acc + 0.3 * nmi + 0.2 * ari + 0.1 * pur
-#             view_scores.append(score)
-#
-#             print(f"Teacher candidate {teacher_candidate}: "
-#                   f"ACC={acc:.4f} NMI={nmi:.4f} PUR={pur:.4f} ARI={ari:.4f} "
-#                   f"Score={score:.4f}")
-#
-#             # 恢复原始教师
-#             model.set_teacher(original_teacher)
-#
-#     return view_scores
-#
-#
-# def evaluate_teacher_with_multiple_metrics(model, mv_data, batch_size, method='comprehensive'):
-#     """
-#     使用多种策略评估教师视图
-#
-#     Args:
-#         method: 'comprehensive' - 综合多个指标
-#                 'acc_primary' - 以ACC为主
-#                 'nmi_primary' - 以NMI为主
-#                 'reconstruction' - 传统重构误差方法
-#     """
-#     model.eval()
-#     num_views = len(mv_data.data_views)
-#
-#     if method == 'reconstruction':
-#         # 原有的重构误差方法
-#         return evaluate_teacher_selection(model, mv_data, batch_size)
-#
-#     teacher_evaluations = []
-#
-#     with torch.no_grad():
-#         for teacher_candidate in range(num_views):
-#             original_teacher = model.teacher_index
-#             model.set_teacher(teacher_candidate)
-#
-#             # 获取各视图的预测
-#             pred_final, preds_each, labels = inference(model, mv_data, batch_size)
-#
-#             # 计算融合结果的性能
-#             acc_fusion, nmi_fusion, pur_fusion, ari_fusion = calculate_metrics(labels, pred_final)
-#
-#             # 计算各视图的平均性能
-#             view_performances = []
-#             for v in range(num_views):
-#                 acc_v, nmi_v, pur_v, ari_v = calculate_metrics(labels, preds_each[v])
-#                 view_performances.append({
-#                     'acc': acc_v, 'nmi': nmi_v, 'pur': pur_v, 'ari': ari_v
-#                 })
-#
-#             # 不同的评分策略
-#             if method == 'comprehensive':
-#                 # 综合评分：融合结果 + 各视图平均性能
-#                 avg_acc = np.mean([v['acc'] for v in view_performances])
-#                 avg_nmi = np.mean([v['nmi'] for v in view_performances])
-#                 avg_ari = np.mean([v['ari'] for v in view_performances])
-#
-#                 score = (0.5 * (0.4 * acc_fusion + 0.3 * nmi_fusion + 0.3 * ari_fusion) +
-#                          0.5 * (0.4 * avg_acc + 0.3 * avg_nmi + 0.3 * avg_ari))
-#
-#             elif method == 'acc_primary':
-#                 # 以ACC为主要指标
-#                 score = 0.7 * acc_fusion + 0.3 * np.mean([v['acc'] for v in view_performances])
-#
-#             elif method == 'nmi_primary':
-#                 # 以NMI为主要指标
-#                 score = 0.7 * nmi_fusion + 0.3 * np.mean([v['nmi'] for v in view_performances])
-#
-#             teacher_evaluations.append({
-#                 'teacher_idx': teacher_candidate,
-#                 'score': score,
-#                 'fusion_performance': {
-#                     'acc': acc_fusion, 'nmi': nmi_fusion,
-#                     'pur': pur_fusion, 'ari': ari_fusion
-#                 },
-#                 'view_performances': view_performances
-#             })
-#
-#             print(f"Teacher candidate {teacher_candidate}: "
-#                   f"Fusion(ACC={acc_fusion:.4f}, NMI={nmi_fusion:.4f}, ARI={ari_fusion:.4f}) "
-#                   f"Score={score:.4f}")
-#
-#             # 恢复原始教师
-#             model.set_teacher(original_teacher)
-#
-#     return teacher_evaluations
-
 
 def evaluate_teacher_with_multiple_metrics(model, mv_data, batch_size, method='comprehensive'):
     """
