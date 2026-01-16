@@ -159,7 +159,6 @@ if __name__ == "__main__":
     print("==> Selecting teacher view based on clustering performance...")
 
     if args.db == "MNIST-USPS, COIL20":
-        # 对MNIST-USPS使用特殊策略
         model.train_mode = 'fusion'
         teacher_evaluations = evaluate_teacher_with_multiple_metrics(
             model, mv_eval, args.batch_size, method='acc_primary'
