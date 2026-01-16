@@ -71,10 +71,8 @@ if __name__ == "__main__":
         args.batch_size = 35
         args.seed = 42
         args.con_epochs = 500
-        args.warmup_epochs = 200  # 增加warmup轮数
-        # args.temperature_l = 0.5
-
-        # 超参数设置
+        args.warmup_epochs = 200  
+       
         dim_high_feature = 2000
         dim_low_feature = 1024
         dims = [256, 512, 1024]
@@ -87,8 +85,7 @@ if __name__ == "__main__":
         args.seed = 42
         args.con_epochs = 500
         args.normalized = True
-        args.warmup_epochs = 200  # 增加warmup轮数
-
+        args.warmup_epochs = 200  
         dim_high_feature = 2000
         dim_low_feature = 1024
         dims = [256, 512]
@@ -102,10 +99,7 @@ if __name__ == "__main__":
         args.seed = 10
         args.mse_epochs = 200
         args.con_epochs = 500
-        args.warmup_epochs = 200  # 增加warmup轮数
-        # args.temperature_l = 0.5
-        # args.ib_lambda = 5e-4
-
+        args.warmup_epochs = 200  
 
         dim_high_feature = 1500
         dim_low_feature = 1024
@@ -118,13 +112,13 @@ if __name__ == "__main__":
         args.batch_size = 100
         args.seed = 20
         args.con_epochs = 500
-        args.warmup_epochs = 200  # 增加warmup轮数
+        args.warmup_epochs = 200  
         args.temperature_l = 0.5
 
         dim_high_feature = 2000
         dim_low_feature = 500
         dims = [256, 512]
-        lambda_max = 0.05
+        lambda_max = 0.01
         beta_max = 0.001
 
 
